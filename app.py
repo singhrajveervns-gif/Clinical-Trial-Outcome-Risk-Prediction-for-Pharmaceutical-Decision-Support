@@ -217,9 +217,9 @@ if predict_clicked:
     p_success = pipeline.predict_proba(input_row)[0, 1]
     tier = risk_tier(p_success)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Predicted success probability", f"{p_success:.1%}")
-    col2.metric("Risk tier", tier)
+    col1, col2 = st.columns(2)
+col1.metric("Predicted completion probability", f"{p_success:.1%}")
+col2.metric("Risk tier", tier)
 
 
     st.divider()
