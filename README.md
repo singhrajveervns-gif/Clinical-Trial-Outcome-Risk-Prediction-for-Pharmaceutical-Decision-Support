@@ -1,4 +1,4 @@
-# Clinical Trial Success Prediction for Pharmaceutical Decision Support
+# Clinical Trial Outcome Risk Prediction for Pharmaceutical Decision Support
 
 A healthcare / pharmaceutical analytics machine learning project predicting whether a
 clinical trial is likely to reach operational completion, using only information
