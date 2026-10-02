@@ -220,7 +220,7 @@ if predict_clicked:
     col1, col2, col3 = st.columns(3)
     col1.metric("Predicted success probability", f"{p_success:.1%}")
     col2.metric("Risk tier", tier)
-    col3.metric("Predicted label", "Success" if p_success >= 0.5 else "At risk")
+
 
     st.divider()
     st.subheader("Why the model landed here")
