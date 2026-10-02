@@ -1,12 +1,10 @@
 """
 Clinical Trial Outcome Risk Prediction — Streamlit App
 
-Loads the fitted pipeline produced in Phase 8.5 of the notebook
-(models/final_model.pkl — a single sklearn Pipeline bundling the
-ColumnTransformer preprocessor + the tuned classifier) and scores a
-single, user-described trial: predicted P(success), a risk tier
-(High / Medium / Low, same cut points as notebook Phase 7.3), and a
-local SHAP explanation of why the model landed on that number.
+Loads the fitted model produced in Phase 8.5 of the notebook
+(models/final_model.pkl) and scores a single, user-described trial:
+predicted operational completion probability, a risk tier, and a
+local SHAP explanation of the underlying tree-model prediction.
 
 Run locally:
     streamlit run app.py
@@ -65,7 +63,11 @@ CATEGORICAL_FEATURES = [
     "Phases",
 ]
 
-MODEL_FEATURES = NUMERIC_FEATURES + BINARY_FEATURES + CATEGORICAL_FEATURES
+MODEL_FEATURES = (
+    NUMERIC_FEATURES
+    + BINARY_FEATURES
+    + CATEGORICAL_FEATURES
+)
 
 
 # --------------------------------------------------------------------
@@ -83,6 +85,10 @@ SPONSOR_GROUP_MAP = {
     "INDIV": "ACADEMIC_OR_OTHER",
 }
 
+
+# --------------------------------------------------------------------
+# Dropdown options
+# --------------------------------------------------------------------
 
 PHASE_OPTIONS = [
     "NOT_APPLICABLE",
@@ -116,7 +122,10 @@ RESPONSIBLE_PARTY_OPTIONS = [
     "Unknown",
 ]
 
-ORG_CLASS_OPTIONS = list(SPONSOR_GROUP_MAP.keys()) + ["UNKNOWN"]
+ORG_CLASS_OPTIONS = (
+    list(SPONSOR_GROUP_MAP.keys())
+    + ["UNKNOWN"]
+)
 
 
 # --------------------------------------------------------------------
@@ -135,8 +144,10 @@ def load_model():
 def risk_tier(p_success: float) -> str:
     if p_success < 0.40:
         return "High Risk (<40%)"
+
     elif p_success < 0.70:
         return "Medium Risk (40-70%)"
+
     return "Low Risk (>70%)"
 
 
@@ -145,73 +156,129 @@ def risk_tier(p_success: float) -> str:
 # --------------------------------------------------------------------
 
 def build_input_row(inputs: dict) -> pd.DataFrame:
+
     num_conditions = inputs["num_conditions"]
     num_interventions = inputs["num_interventions"]
 
     row = {
         "num_conditions": num_conditions,
+
         "num_interventions": num_interventions,
-        "brief_title_word_count": len(inputs["brief_title"].split()),
-        "full_title_word_count": len(inputs["full_title"].split()),
-        "intervention_description_word_count": len(
-            inputs["intervention_description"].split()
+
+        "brief_title_word_count": (
+            len(inputs["brief_title"].split())
         ),
+
+        "full_title_word_count": (
+            len(inputs["full_title"].split())
+        ),
+
+        "intervention_description_word_count": (
+            len(inputs["intervention_description"].split())
+        ),
+
         "start_year": inputs["start_year"],
-        "trial_complexity_index": num_conditions + num_interventions,
-        "is_multi_condition": int(num_conditions > 1),
-        "is_multi_intervention": int(num_interventions > 1),
-        "includes_child": int(inputs["includes_child"]),
-        "includes_adult": int(inputs["includes_adult"]),
-        "includes_older_adult": int(inputs["includes_older_adult"]),
-        "sponsor_type_grouped": SPONSOR_GROUP_MAP.get(
-            inputs["org_class"], "OTHER"
+
+        "trial_complexity_index": (
+            num_conditions + num_interventions
         ),
-        "Responsible Party": inputs["responsible_party"],
-        "Primary Purpose": inputs["primary_purpose"],
-        "Study Type": inputs["study_type"],
-        "Phases": inputs["phase"],
+
+        "is_multi_condition": int(
+            num_conditions > 1
+        ),
+
+        "is_multi_intervention": int(
+            num_interventions > 1
+        ),
+
+        "includes_child": int(
+            inputs["includes_child"]
+        ),
+
+        "includes_adult": int(
+            inputs["includes_adult"]
+        ),
+
+        "includes_older_adult": int(
+            inputs["includes_older_adult"]
+        ),
+
+        "sponsor_type_grouped": (
+            SPONSOR_GROUP_MAP.get(
+                inputs["org_class"],
+                "OTHER"
+            )
+        ),
+
+        "Responsible Party": (
+            inputs["responsible_party"]
+        ),
+
+        "Primary Purpose": (
+            inputs["primary_purpose"]
+        ),
+
+        "Study Type": (
+            inputs["study_type"]
+        ),
+
+        "Phases": (
+            inputs["phase"]
+        ),
     }
 
-    return pd.DataFrame([row], columns=MODEL_FEATURES)
+    return pd.DataFrame(
+        [row],
+        columns=MODEL_FEATURES
+    )
 
 
 # --------------------------------------------------------------------
 # SHAP explanation
 # --------------------------------------------------------------------
 
-def explain_prediction(pipeline, input_row: pd.DataFrame):
+def explain_prediction(
+    model,
+    input_row: pd.DataFrame
+):
     """
-    Best-effort local SHAP explanation.
+    Generate a local SHAP explanation.
 
-    Supports both a direct tree-based classifier and a calibrated
-    classifier such as CalibratedClassifierCV by extracting the
-    underlying tree estimator(s).
+    The saved model is a CalibratedClassifierCV. For SHAP, we
+    extract the underlying fitted pipeline(s), transform the
+    input with the same preprocessor used during training, and
+    explain the underlying tree classifier.
+
+    The displayed probability remains the calibrated probability
+    returned by model.predict_proba().
     """
 
     try:
+
         import shap
 
-        preprocessor = pipeline.named_steps["preprocessor"]
-        classifier = pipeline.named_steps["classifier"]
-
-        # Transform the input exactly as the model sees it
-        transformed = preprocessor.transform(input_row)
-
-        if hasattr(transformed, "toarray"):
-            transformed = transformed.toarray()
-
-        feature_names = preprocessor.get_feature_names_out()
-
         # ------------------------------------------------------------
-        # Extract underlying tree estimator(s)
+        # Find fitted base estimator(s)
         # ------------------------------------------------------------
 
-        estimators = []
+        base_models = []
 
+        # Case 1:
+        # Normal sklearn Pipeline
+        if hasattr(model, "named_steps"):
+
+            base_models.append(model)
+
+        # Case 2:
         # CalibratedClassifierCV
-        if hasattr(classifier, "calibrated_classifiers_"):
+        elif hasattr(
+            model,
+            "calibrated_classifiers_"
+        ):
 
-            for calibrated_classifier in classifier.calibrated_classifiers_:
+            for calibrated_classifier in (
+                model.calibrated_classifiers_
+            ):
 
                 estimator = getattr(
                     calibrated_classifier,
@@ -219,7 +286,9 @@ def explain_prediction(pipeline, input_row: pd.DataFrame):
                     None
                 )
 
+                # Compatibility with older sklearn
                 if estimator is None:
+
                     estimator = getattr(
                         calibrated_classifier,
                         "base_estimator",
@@ -227,85 +296,218 @@ def explain_prediction(pipeline, input_row: pd.DataFrame):
                     )
 
                 if estimator is not None:
-                    estimators.append(estimator)
 
-        # Direct tree-based classifier
+                    base_models.append(
+                        estimator
+                    )
+
+        # Case 3:
+        # Direct estimator
         else:
-            estimators.append(classifier)
 
-        if not estimators:
-            return None
+            base_models.append(model)
+
+        if not base_models:
+
+            raise ValueError(
+                "Could not find fitted base estimator(s) "
+                "inside the saved model."
+            )
 
         # ------------------------------------------------------------
         # Calculate SHAP values
         # ------------------------------------------------------------
 
-        shap_rows = []
+        all_shap_values = []
 
-        for estimator in estimators:
+        feature_names = None
 
-            explainer = shap.TreeExplainer(estimator)
-            raw_shap = explainer.shap_values(transformed)
+        for base_model in base_models:
 
-            # Older SHAP versions:
-            # list of arrays, one for each class
-            if isinstance(raw_shap, list):
+            # --------------------------------------------------------
+            # Extract preprocessing + classifier
+            # --------------------------------------------------------
 
-                shap_row = raw_shap[1][0]
+            if hasattr(
+                base_model,
+                "named_steps"
+            ):
 
-            # Newer SHAP versions:
-            # (samples, features, classes)
-            elif getattr(raw_shap, "ndim", 0) == 3:
+                if "preprocessor" not in (
+                    base_model.named_steps
+                ):
 
-                shap_row = raw_shap[0, :, 1]
+                    raise ValueError(
+                        "The fitted pipeline does not contain "
+                        "a 'preprocessor' step."
+                    )
 
-            # Binary classification:
-            # (samples, features)
+                preprocessor = (
+                    base_model.named_steps[
+                        "preprocessor"
+                    ]
+                )
+
+                if "classifier" not in (
+                    base_model.named_steps
+                ):
+
+                    raise ValueError(
+                        "The fitted pipeline does not contain "
+                        "a 'classifier' step."
+                    )
+
+                estimator = (
+                    base_model.named_steps[
+                        "classifier"
+                    ]
+                )
+
+                # Transform exactly as during model training
+                transformed = (
+                    preprocessor.transform(
+                        input_row
+                    )
+                )
+
+                # Convert sparse matrix to dense
+                if hasattr(
+                    transformed,
+                    "toarray"
+                ):
+
+                    transformed = (
+                        transformed.toarray()
+                    )
+
+                feature_names = (
+                    preprocessor
+                    .get_feature_names_out()
+                )
+
             else:
 
+                # Direct tree estimator
+                estimator = base_model
+
+                transformed = (
+                    input_row.to_numpy()
+                )
+
+                feature_names = np.asarray(
+                    input_row.columns
+                )
+
+            # --------------------------------------------------------
+            # SHAP TreeExplainer
+            # --------------------------------------------------------
+
+            explainer = shap.TreeExplainer(
+                estimator
+            )
+
+            raw_shap = explainer.shap_values(
+                transformed,
+                check_additivity=False
+            )
+
+            # --------------------------------------------------------
+            # Handle SHAP output formats
+            # --------------------------------------------------------
+
+            if isinstance(
+                raw_shap,
+                list
+            ):
+
+                # Older SHAP:
+                # [class_0_values, class_1_values]
+                shap_row = raw_shap[1][0]
+
+            elif getattr(
+                raw_shap,
+                "ndim",
+                0
+            ) == 3:
+
+                # Newer SHAP:
+                # samples x features x classes
+                shap_row = raw_shap[
+                    0,
+                    :,
+                    1
+                ]
+
+            else:
+
+                # Binary output:
+                # samples x features
                 shap_row = raw_shap[0]
 
-            shap_rows.append(shap_row)
+            all_shap_values.append(
+                np.asarray(
+                    shap_row,
+                    dtype=float
+                )
+            )
 
         # ------------------------------------------------------------
-        # Average SHAP values across estimators
+        # Average across calibrated estimators
         # ------------------------------------------------------------
 
         shap_values = np.mean(
-            np.asarray(shap_rows),
+            np.vstack(
+                all_shap_values
+            ),
             axis=0
         )
 
-        return pd.Series(
-            shap_values,
-            index=feature_names
-        ).sort_values(
-            key=abs,
-            ascending=False
+        return (
+            pd.Series(
+                shap_values,
+                index=feature_names
+            )
+            .sort_values(
+                key=np.abs,
+                ascending=False
+            )
         )
 
     except Exception as e:
+
         st.error(
-            f"SHAP explanation error: {type(e).__name__}: {e}"
+            "SHAP explanation error: "
+            f"{type(e).__name__}: {e}"
         )
+
         return None
+
+
+# --------------------------------------------------------------------
+# Page title
+# --------------------------------------------------------------------
+
+st.title(
+    "🧪 Clinical Trial Outcome Risk Predictor"
+)
+
+st.caption(
+    "Portfolio demo — predicts an **operational completion** "
+    "probability (Completed vs. Terminated/Withdrawn/Suspended) "
+    "from design-time trial characteristics only. "
+    "Not a clinical, efficacy, or investment recommendation."
+)
 
 
 # --------------------------------------------------------------------
 # Sidebar — trial inputs
 # --------------------------------------------------------------------
 
-st.title("🧪 Clinical Trial Outcome Risk Predictor")
-
-st.caption(
-    "Portfolio demo — predicts an **operational completion** probability "
-    "(Completed vs. Terminated/Withdrawn/Suspended) from design-time trial "
-    "characteristics only. Not a clinical, efficacy, or investment recommendation."
-)
-
 with st.sidebar:
 
-    st.header("Describe the trial")
+    st.header(
+        "Describe the trial"
+    )
 
     brief_title = st.text_input(
         "Brief title",
@@ -314,19 +516,23 @@ with st.sidebar:
 
     full_title = st.text_input(
         "Full title",
-        "A Randomized, Double-Blind Study of Drug X in Adult Patients With Condition Y",
+        "A Randomized, Double-Blind Study of Drug X "
+        "in Adult Patients With Condition Y"
     )
 
     intervention_description = st.text_area(
         "Intervention description",
-        "Participants receive Drug X or placebo once daily for 12 weeks.",
+        "Participants receive Drug X or placebo "
+        "once daily for 12 weeks."
     )
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
     # Design complexity
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
 
-    st.subheader("Design complexity")
+    st.subheader(
+        "Design complexity"
+    )
 
     conditions_text = st.text_input(
         "Conditions studied (comma-separated)",
@@ -340,12 +546,26 @@ with st.sidebar:
 
     num_conditions = max(
         1,
-        len([c for c in conditions_text.split(",") if c.strip()])
+        len(
+            [
+                c
+                for c
+                in conditions_text.split(",")
+                if c.strip()
+            ]
+        )
     )
 
     num_interventions = max(
         1,
-        len([i for i in interventions_text.split(",") if i.strip()])
+        len(
+            [
+                i
+                for i
+                in interventions_text.split(",")
+                if i.strip()
+            ]
+        )
     )
 
     st.caption(
@@ -353,11 +573,13 @@ with st.sidebar:
         f"{num_interventions} intervention(s)"
     )
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
     # Eligibility
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
 
-    st.subheader("Eligibility")
+    st.subheader(
+        "Eligibility"
+    )
 
     includes_child = st.checkbox(
         "Includes pediatric participants (Child)"
@@ -372,11 +594,13 @@ with st.sidebar:
         "Includes older-adult participants"
     )
 
-    # ------------------------------------------------------------
-    # Sponsor & design
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
+    # Sponsor and design
+    # --------------------------------------------------------------
 
-    st.subheader("Sponsor & design")
+    st.subheader(
+        "Sponsor & design"
+    )
 
     org_class = st.selectbox(
         "Sponsor organization class",
@@ -396,7 +620,10 @@ with st.sidebar:
 
     study_type = st.selectbox(
         "Study type",
-        ["INTERVENTIONAL", "OBSERVATIONAL"]
+        [
+            "INTERVENTIONAL",
+            "OBSERVATIONAL"
+        ]
     )
 
     phase = st.selectbox(
@@ -419,51 +646,91 @@ with st.sidebar:
 
 
 # --------------------------------------------------------------------
-# Main panel — prediction + explanation
+# Load model
 # --------------------------------------------------------------------
 
 try:
 
-    pipeline = load_model()
+    model = load_model()
 
 except FileNotFoundError:
 
     st.error(
-        f"Couldn't find `{MODEL_PATH}`. Place the saved pipeline from notebook "
-        "Phase 8.5 at that path (see the README's folder layout) and rerun."
+        f"Couldn't find `{MODEL_PATH}`. "
+        "Place the saved model at that path and rerun."
+    )
+
+    st.stop()
+
+except Exception as e:
+
+    st.error(
+        f"Could not load the model: "
+        f"{type(e).__name__}: {e}"
     )
 
     st.stop()
 
 
+# --------------------------------------------------------------------
+# Prediction
+# --------------------------------------------------------------------
+
 if predict_clicked:
 
-    inputs = dict(
-        brief_title=brief_title,
-        full_title=full_title,
-        intervention_description=intervention_description,
-        num_conditions=num_conditions,
-        num_interventions=num_interventions,
-        includes_child=includes_child,
-        includes_adult=includes_adult,
-        includes_older_adult=includes_older_adult,
-        org_class=org_class,
-        responsible_party=responsible_party,
-        primary_purpose=primary_purpose,
-        study_type=study_type,
-        phase=phase,
-        start_year=start_year,
+    inputs = {
+        "brief_title": brief_title,
+        "full_title": full_title,
+        "intervention_description": (
+            intervention_description
+        ),
+        "num_conditions": num_conditions,
+        "num_interventions": num_interventions,
+        "includes_child": includes_child,
+        "includes_adult": includes_adult,
+        "includes_older_adult": includes_older_adult,
+        "org_class": org_class,
+        "responsible_party": responsible_party,
+        "primary_purpose": primary_purpose,
+        "study_type": study_type,
+        "phase": phase,
+        "start_year": start_year,
+    }
+
+    # --------------------------------------------------------------
+    # Build input row
+    # --------------------------------------------------------------
+
+    input_row = build_input_row(
+        inputs
     )
 
-    input_row = build_input_row(inputs)
+    # --------------------------------------------------------------
+    # Predict calibrated probability
+    # --------------------------------------------------------------
 
-    p_success = pipeline.predict_proba(input_row)[0, 1]
+    try:
 
-    tier = risk_tier(p_success)
+        p_success = model.predict_proba(
+            input_row
+        )[0, 1]
 
-    # ------------------------------------------------------------
+    except Exception as e:
+
+        st.error(
+            f"Prediction error: "
+            f"{type(e).__name__}: {e}"
+        )
+
+        st.stop()
+
+    tier = risk_tier(
+        p_success
+    )
+
+    # --------------------------------------------------------------
     # Prediction metrics
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -477,40 +744,55 @@ if predict_clicked:
         tier
     )
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
     # SHAP explanation
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
 
     st.divider()
 
-    st.subheader("Why the model landed here")
+    st.subheader(
+        "Why the model landed here"
+    )
 
     shap_contributions = explain_prediction(
-        pipeline,
+        model,
         input_row
     )
 
     if shap_contributions is not None:
 
-        top = shap_contributions.head(10).iloc[::-1]
-
-        fig, ax = plt.subplots(
-            figsize=(7, 4.5)
+        top = (
+            shap_contributions
+            .head(10)
+            .iloc[::-1]
         )
 
-        colors = [
-            "#d62728" if v < 0 else "#2ca02c"
-            for v in top.values
+        fig, ax = plt.subplots(
+            figsize=(8, 5)
+        )
+
+        bar_colors = [
+            "#d62728"
+            if value < 0
+            else "#2ca02c"
+            for value
+            in top.values
         ]
 
         ax.barh(
             top.index,
             top.values,
-            color=colors
+            color=bar_colors
+        )
+
+        ax.axvline(
+            0,
+            linewidth=0.8
         )
 
         ax.set_xlabel(
-            "SHAP value (→ pushes toward success / away from it)"
+            "SHAP value "
+            "(pushes prediction toward success / failure)"
         )
 
         ax.set_title(
@@ -519,26 +801,31 @@ if predict_clicked:
 
         plt.tight_layout()
 
-        st.pyplot(fig)
+        st.pyplot(
+            fig
+        )
 
-        plt.close(fig)
+        plt.close(
+            fig
+        )
 
         st.caption(
-            "Green bars push the prediction toward **success**; red bars push it "
-            "toward **failure**. This explains the model's reasoning, not a claim "
-            "about real-world causality."
+            "Green bars push the underlying tree model "
+            "toward **success**; red bars push it toward "
+            "**failure**. SHAP describes model behavior, "
+            "not real-world causality."
         )
 
     else:
 
         st.info(
-            "The prediction above is valid, but a local SHAP feature breakdown "
-            "could not be generated."
+            "The prediction above is valid, but a local "
+            "SHAP feature breakdown could not be generated."
         )
 
-    # ------------------------------------------------------------
-    # Exact model input
-    # ------------------------------------------------------------
+    # --------------------------------------------------------------
+    # Exact feature row
+    # --------------------------------------------------------------
 
     with st.expander(
         "Show the exact feature row sent to the model"
@@ -553,8 +840,8 @@ if predict_clicked:
 else:
 
     st.info(
-        "Fill in the trial details in the sidebar, then click "
-        "**Predict trial outcome**."
+        "Fill in the trial details in the sidebar, "
+        "then click **Predict trial outcome**."
     )
 
 
@@ -565,7 +852,8 @@ else:
 st.divider()
 
 st.caption(
-    "This tool reflects a model trained on historical ClinicalTrials.gov registry "
-    "data. It reports statistical association, not clinical efficacy or causality, "
-    "and should support — not replace — human portfolio review."
+    "This tool reflects a model trained on historical "
+    "ClinicalTrials.gov registry data. It reports statistical "
+    "association, not clinical efficacy or causality, and should "
+    "support — not replace — human portfolio review."
 )
