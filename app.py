@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 # Page setup
 # --------------------------------------------------------------------
 st.set_page_config(
-    page_title="Clinical Trial Success Predictor",
+    page_title="Clinical Trial Outcome Risk Predictor",
     page_icon="🧪",
     layout="wide",
 )
@@ -148,7 +148,7 @@ def explain_prediction(pipeline, input_row: pd.DataFrame):
 # --------------------------------------------------------------------
 # Sidebar — trial inputs
 # --------------------------------------------------------------------
-st.title("🧪 Clinical Trial Success Predictor")
+st.title("🧪 Clinical Trial Outcome Risk Predictor")
 st.caption(
     "Portfolio demo — predicts an **operational completion** probability "
     "(Completed vs. Terminated/Withdrawn/Suspended) from design-time trial "
