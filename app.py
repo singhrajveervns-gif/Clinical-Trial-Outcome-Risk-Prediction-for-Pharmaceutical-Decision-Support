@@ -284,7 +284,10 @@ def explain_prediction(pipeline, input_row: pd.DataFrame):
             ascending=False
         )
 
-    except Exception:
+    except Exception as e:
+        st.error(
+            f"SHAP explanation error: {type(e).__name__}: {e}"
+        )
         return None
 
 
@@ -529,8 +532,8 @@ if predict_clicked:
     else:
 
         st.info(
-            "Local SHAP explanation isn't available for this model type — the "
-            "prediction above is still valid, just without the feature breakdown."
+            "The prediction above is valid, but a local SHAP feature breakdown "
+            "could not be generated."
         )
 
     # ------------------------------------------------------------
