@@ -142,6 +142,7 @@ def load_model():
 # --------------------------------------------------------------------
 
 def risk_tier(p_success: float) -> str:
+
     if p_success < 0.40:
         return "High Risk (<40%)"
 
@@ -174,7 +175,9 @@ def build_input_row(inputs: dict) -> pd.DataFrame:
         ),
 
         "intervention_description_word_count": (
-            len(inputs["intervention_description"].split())
+            len(
+                inputs["intervention_description"].split()
+            )
         ),
 
         "start_year": inputs["start_year"],
@@ -234,6 +237,157 @@ def build_input_row(inputs: dict) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------
+# SHAP feature display names
+# --------------------------------------------------------------------
+
+DISPLAY_NAME_MAP = {
+    "num__num_conditions":
+        "Number of Conditions",
+
+    "num__num_interventions":
+        "Number of Interventions",
+
+    "num__brief_title_word_count":
+        "Brief Title Length",
+
+    "num__full_title_word_count":
+        "Full Title Length",
+
+    "num__intervention_description_word_count":
+        "Intervention Description Length",
+
+    "num__start_year":
+        "Start Year",
+
+    "num__trial_complexity_index":
+        "Trial Complexity",
+
+    "bin__is_multi_condition":
+        "Multiple Conditions",
+
+    "bin__is_multi_intervention":
+        "Multiple Interventions",
+
+    "bin__includes_child":
+        "Includes Child",
+
+    "bin__includes_adult":
+        "Includes Adult",
+
+    "bin__includes_older_adult":
+        "Includes Older Adult",
+
+    "cat__sponsor_type_grouped_INDUSTRY":
+        "Sponsor: Industry",
+
+    "cat__sponsor_type_grouped_GOVERNMENT":
+        "Sponsor: Government",
+
+    "cat__sponsor_type_grouped_ACADEMIC_OR_NETWORK":
+        "Sponsor: Academic / Network",
+
+    "cat__sponsor_type_grouped_ACADEMIC_OR_OTHER":
+        "Sponsor: Academic / Other",
+
+    "cat__Responsible Party_SPONSOR":
+        "Responsible Party: Sponsor",
+
+    "cat__Responsible Party_PRINCIPAL_INVESTIGATOR":
+        "Responsible Party: Principal Investigator",
+
+    "cat__Responsible Party_Unknown":
+        "Responsible Party: Unknown",
+
+    "cat__Primary Purpose_TREATMENT":
+        "Purpose: Treatment",
+
+    "cat__Primary Purpose_PREVENTION":
+        "Purpose: Prevention",
+
+    "cat__Primary Purpose_DIAGNOSTIC":
+        "Purpose: Diagnostic",
+
+    "cat__Primary Purpose_SUPPORTIVE_CARE":
+        "Purpose: Supportive Care",
+
+    "cat__Primary Purpose_SCREENING":
+        "Purpose: Screening",
+
+    "cat__Primary Purpose_HEALTH_SERVICES_RESEARCH":
+        "Purpose: Health Services Research",
+
+    "cat__Primary Purpose_BASIC_SCIENCE":
+        "Purpose: Basic Science",
+
+    "cat__Primary Purpose_DEVICE_FEASIBILITY":
+        "Purpose: Device Feasibility",
+
+    "cat__Primary Purpose_ECT":
+        "Purpose: ECT",
+
+    "cat__Primary Purpose_OTHER":
+        "Purpose: Other",
+
+    "cat__Primary Purpose_Unknown":
+        "Purpose: Unknown",
+
+    "cat__Study Type_INTERVENTIONAL":
+        "Study Type: Interventional",
+
+    "cat__Study Type_OBSERVATIONAL":
+        "Study Type: Observational",
+
+    "cat__Phases_NOT_APPLICABLE":
+        "Phase: Not Applicable",
+
+    "cat__Phases_EARLY_PHASE1":
+        "Phase: Early Phase 1",
+
+    "cat__Phases_PHASE1":
+        "Phase: Phase 1",
+
+    "cat__Phases_PHASE1, PHASE2":
+        "Phase: Phase 1 / 2",
+
+    "cat__Phases_PHASE2":
+        "Phase: Phase 2",
+
+    "cat__Phases_PHASE2, PHASE3":
+        "Phase: Phase 2 / 3",
+
+    "cat__Phases_PHASE3":
+        "Phase: Phase 3",
+
+    "cat__Phases_PHASE4":
+        "Phase: Phase 4",
+
+    "cat__Phases_Unknown":
+        "Phase: Unknown",
+}
+
+
+def clean_feature_name(feature_name: str) -> str:
+    """
+    Convert transformed feature names into recruiter-friendly labels.
+    Uses an explicit mapping where available and a generic fallback
+    for any unexpected feature names.
+    """
+
+    if feature_name in DISPLAY_NAME_MAP:
+        return DISPLAY_NAME_MAP[feature_name]
+
+    cleaned = feature_name
+
+    cleaned = cleaned.replace("num__", "")
+    cleaned = cleaned.replace("bin__", "")
+    cleaned = cleaned.replace("cat__", "")
+
+    cleaned = cleaned.replace("_", " ")
+
+    return cleaned.title()
+
+
+# --------------------------------------------------------------------
 # SHAP explanation
 # --------------------------------------------------------------------
 
@@ -244,12 +398,10 @@ def explain_prediction(
     """
     Generate a local SHAP explanation.
 
-    The saved model is a CalibratedClassifierCV. For SHAP, we
-    extract the underlying fitted pipeline(s), transform the
-    input with the same preprocessor used during training, and
-    explain the underlying tree classifier.
+    The saved model is a CalibratedClassifierCV. For SHAP, the
+    underlying fitted tree estimator(s) are extracted and explained.
 
-    The displayed probability remains the calibrated probability
+    The displayed prediction remains the calibrated probability
     returned by model.predict_proba().
     """
 
@@ -263,13 +415,14 @@ def explain_prediction(
 
         base_models = []
 
-        # Case 1:
         # Normal sklearn Pipeline
-        if hasattr(model, "named_steps"):
+        if hasattr(
+            model,
+            "named_steps"
+        ):
 
             base_models.append(model)
 
-        # Case 2:
         # CalibratedClassifierCV
         elif hasattr(
             model,
@@ -301,7 +454,6 @@ def explain_prediction(
                         estimator
                     )
 
-        # Case 3:
         # Direct estimator
         else:
 
@@ -315,7 +467,7 @@ def explain_prediction(
             )
 
         # ------------------------------------------------------------
-        # Calculate SHAP values
+        # SHAP for each underlying estimator
         # ------------------------------------------------------------
 
         all_shap_values = []
@@ -325,7 +477,7 @@ def explain_prediction(
         for base_model in base_models:
 
             # --------------------------------------------------------
-            # Extract preprocessing + classifier
+            # Pipeline containing preprocessor + classifier
             # --------------------------------------------------------
 
             if hasattr(
@@ -342,12 +494,6 @@ def explain_prediction(
                         "a 'preprocessor' step."
                     )
 
-                preprocessor = (
-                    base_model.named_steps[
-                        "preprocessor"
-                    ]
-                )
-
                 if "classifier" not in (
                     base_model.named_steps
                 ):
@@ -357,20 +503,25 @@ def explain_prediction(
                         "a 'classifier' step."
                     )
 
+                preprocessor = (
+                    base_model.named_steps[
+                        "preprocessor"
+                    ]
+                )
+
                 estimator = (
                     base_model.named_steps[
                         "classifier"
                     ]
                 )
 
-                # Transform exactly as during model training
+                # Same preprocessing as training
                 transformed = (
                     preprocessor.transform(
                         input_row
                     )
                 )
 
-                # Convert sparse matrix to dense
                 if hasattr(
                     transformed,
                     "toarray"
@@ -385,9 +536,12 @@ def explain_prediction(
                     .get_feature_names_out()
                 )
 
+            # --------------------------------------------------------
+            # Direct estimator
+            # --------------------------------------------------------
+
             else:
 
-                # Direct tree estimator
                 estimator = base_model
 
                 transformed = (
@@ -399,7 +553,7 @@ def explain_prediction(
                 )
 
             # --------------------------------------------------------
-            # SHAP TreeExplainer
+            # Tree SHAP
             # --------------------------------------------------------
 
             explainer = shap.TreeExplainer(
@@ -412,7 +566,7 @@ def explain_prediction(
             )
 
             # --------------------------------------------------------
-            # Handle SHAP output formats
+            # SHAP output formats
             # --------------------------------------------------------
 
             if isinstance(
@@ -420,8 +574,7 @@ def explain_prediction(
                 list
             ):
 
-                # Older SHAP:
-                # [class_0_values, class_1_values]
+                # Older SHAP versions
                 shap_row = raw_shap[1][0]
 
             elif getattr(
@@ -430,8 +583,7 @@ def explain_prediction(
                 0
             ) == 3:
 
-                # Newer SHAP:
-                # samples x features x classes
+                # Newer SHAP versions
                 shap_row = raw_shap[
                     0,
                     :,
@@ -440,8 +592,7 @@ def explain_prediction(
 
             else:
 
-                # Binary output:
-                # samples x features
+                # Binary classification
                 shap_row = raw_shap[0]
 
             all_shap_values.append(
@@ -462,7 +613,7 @@ def explain_prediction(
             axis=0
         )
 
-        return (
+        shap_series = (
             pd.Series(
                 shap_values,
                 index=feature_names
@@ -472,6 +623,8 @@ def explain_prediction(
                 ascending=False
             )
         )
+
+        return shap_series
 
     except Exception as e:
 
@@ -549,8 +702,7 @@ with st.sidebar:
         len(
             [
                 c
-                for c
-                in conditions_text.split(",")
+                for c in conditions_text.split(",")
                 if c.strip()
             ]
         )
@@ -561,8 +713,7 @@ with st.sidebar:
         len(
             [
                 i
-                for i
-                in interventions_text.split(",")
+                for i in interventions_text.split(",")
                 if i.strip()
             ]
         )
@@ -698,7 +849,7 @@ if predict_clicked:
     }
 
     # --------------------------------------------------------------
-    # Build input row
+    # Build input
     # --------------------------------------------------------------
 
     input_row = build_input_row(
@@ -706,7 +857,7 @@ if predict_clicked:
     )
 
     # --------------------------------------------------------------
-    # Predict calibrated probability
+    # Prediction
     # --------------------------------------------------------------
 
     try:
@@ -761,11 +912,23 @@ if predict_clicked:
 
     if shap_contributions is not None:
 
+        # Top 10 absolute SHAP contributors
         top = (
             shap_contributions
             .head(10)
             .iloc[::-1]
+            .copy()
         )
+
+        # Convert technical feature names into readable labels
+        top.index = [
+            clean_feature_name(feature)
+            for feature in top.index
+        ]
+
+        # ----------------------------------------------------------
+        # Plot
+        # ----------------------------------------------------------
 
         fig, ax = plt.subplots(
             figsize=(8, 5)
@@ -796,7 +959,7 @@ if predict_clicked:
         )
 
         ax.set_title(
-            "Top feature contributions for this trial"
+            "Top Feature Contributions for This Trial"
         )
 
         plt.tight_layout()
