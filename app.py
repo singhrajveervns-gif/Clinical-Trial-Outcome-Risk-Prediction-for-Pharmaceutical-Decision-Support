@@ -32,16 +32,12 @@ st.set_page_config(
     layout="wide",
 )
 
-
 MODEL_PATH = "models/final_model.pkl"
 
 
 # --------------------------------------------------------------------
 # Feature definitions
 # --------------------------------------------------------------------
-
-# The exact 17 raw columns the fitted pipeline's ColumnTransformer expects,
-# in the same names used during training (Phase 5A.1 of the notebook).
 
 NUMERIC_FEATURES = [
     "num_conditions",
@@ -75,10 +71,6 @@ MODEL_FEATURES = NUMERIC_FEATURES + BINARY_FEATURES + CATEGORICAL_FEATURES
 # --------------------------------------------------------------------
 # Sponsor grouping
 # --------------------------------------------------------------------
-
-# Same grouping rule used in notebook Phase 3.5, applied here to the raw
-# "Organization Class" value so the form asks for something a real user
-# would actually know, and the app derives the engineered category.
 
 SPONSOR_GROUP_MAP = {
     "INDUSTRY": "INDUSTRY",
@@ -141,7 +133,6 @@ def load_model():
 # --------------------------------------------------------------------
 
 def risk_tier(p_success: float) -> str:
-    # Same cut points as notebook Phase 7.3
     if p_success < 0.40:
         return "High Risk (<40%)"
     elif p_success < 0.70:
@@ -188,14 +179,13 @@ def build_input_row(inputs: dict) -> pd.DataFrame:
 # SHAP explanation
 # --------------------------------------------------------------------
 
-def explain_prediction(
-    pipeline, input_row: pd.DataFrame
-):
+def explain_prediction(pipeline, input_row: pd.DataFrame):
     """
     Best-effort local SHAP explanation.
 
-    Returns None if the final classifier isn't tree-based
-    (TreeExplainer doesn't apply).
+    Supports both a direct tree-based classifier and a calibrated
+    classifier such as CalibratedClassifierCV by extracting the
+    underlying tree estimator(s).
     """
 
     try:
@@ -204,6 +194,7 @@ def explain_prediction(
         preprocessor = pipeline.named_steps["preprocessor"]
         classifier = pipeline.named_steps["classifier"]
 
+        # Transform the input exactly as the model sees it
         transformed = preprocessor.transform(input_row)
 
         if hasattr(transformed, "toarray"):
@@ -211,26 +202,82 @@ def explain_prediction(
 
         feature_names = preprocessor.get_feature_names_out()
 
-        explainer = shap.TreeExplainer(classifier)
-        raw_shap = explainer.shap_values(transformed)
+        # ------------------------------------------------------------
+        # Extract underlying tree estimator(s)
+        # ------------------------------------------------------------
 
-        if isinstance(raw_shap, list):
-            # Older SHAP:
-            # list of per-class arrays, shape (n_samples, n_features)
-            shap_row = raw_shap[1][0]
+        estimators = []
 
-        elif raw_shap.ndim == 3:
-            # Newer SHAP:
-            # single array, shape (n_samples, n_features, n_classes)
-            shap_row = raw_shap[0, :, 1]
+        # CalibratedClassifierCV
+        if hasattr(classifier, "calibrated_classifiers_"):
 
+            for calibrated_classifier in classifier.calibrated_classifiers_:
+
+                estimator = getattr(
+                    calibrated_classifier,
+                    "estimator",
+                    None
+                )
+
+                if estimator is None:
+                    estimator = getattr(
+                        calibrated_classifier,
+                        "base_estimator",
+                        None
+                    )
+
+                if estimator is not None:
+                    estimators.append(estimator)
+
+        # Direct tree-based classifier
         else:
-            # Binary-only output,
-            # shape (n_samples, n_features)
-            shap_row = raw_shap[0]
+            estimators.append(classifier)
+
+        if not estimators:
+            return None
+
+        # ------------------------------------------------------------
+        # Calculate SHAP values
+        # ------------------------------------------------------------
+
+        shap_rows = []
+
+        for estimator in estimators:
+
+            explainer = shap.TreeExplainer(estimator)
+            raw_shap = explainer.shap_values(transformed)
+
+            # Older SHAP versions:
+            # list of arrays, one for each class
+            if isinstance(raw_shap, list):
+
+                shap_row = raw_shap[1][0]
+
+            # Newer SHAP versions:
+            # (samples, features, classes)
+            elif getattr(raw_shap, "ndim", 0) == 3:
+
+                shap_row = raw_shap[0, :, 1]
+
+            # Binary classification:
+            # (samples, features)
+            else:
+
+                shap_row = raw_shap[0]
+
+            shap_rows.append(shap_row)
+
+        # ------------------------------------------------------------
+        # Average SHAP values across estimators
+        # ------------------------------------------------------------
+
+        shap_values = np.mean(
+            np.asarray(shap_rows),
+            axis=0
+        )
 
         return pd.Series(
-            shap_row,
+            shap_values,
             index=feature_names
         ).sort_values(
             key=abs,
@@ -253,7 +300,6 @@ st.caption(
     "characteristics only. Not a clinical, efficacy, or investment recommendation."
 )
 
-
 with st.sidebar:
 
     st.header("Describe the trial")
@@ -273,9 +319,9 @@ with st.sidebar:
         "Participants receive Drug X or placebo once daily for 12 weeks.",
     )
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # Design complexity
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     st.subheader("Design complexity")
 
@@ -304,9 +350,9 @@ with st.sidebar:
         f"{num_interventions} intervention(s)"
     )
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # Eligibility
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     st.subheader("Eligibility")
 
@@ -323,9 +369,9 @@ with st.sidebar:
         "Includes older-adult participants"
     )
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # Sponsor & design
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     st.subheader("Sponsor & design")
 
@@ -374,13 +420,16 @@ with st.sidebar:
 # --------------------------------------------------------------------
 
 try:
+
     pipeline = load_model()
 
 except FileNotFoundError:
+
     st.error(
         f"Couldn't find `{MODEL_PATH}`. Place the saved pipeline from notebook "
         "Phase 8.5 at that path (see the README's folder layout) and rerun."
     )
+
     st.stop()
 
 
@@ -409,9 +458,9 @@ if predict_clicked:
 
     tier = risk_tier(p_success)
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # Prediction metrics
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -425,9 +474,9 @@ if predict_clicked:
         tier
     )
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # SHAP explanation
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     st.divider()
 
@@ -484,13 +533,14 @@ if predict_clicked:
             "prediction above is still valid, just without the feature breakdown."
         )
 
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
     # Exact model input
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------
 
     with st.expander(
         "Show the exact feature row sent to the model"
     ):
+
         st.dataframe(
             input_row.T.rename(
                 columns={0: "value"}
